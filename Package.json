@@ -1,12 +1,24 @@
 {
   "name": "project-jack",
   "version": "1.0.0",
-  "description": "AI Minecraft Player - Jack Bhaiya",
+  "description": "Autonomous AI Minecraft Companion Agent - Jack Bhaiya",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "minecraft",
+    "mineflayer",
+    "ai-agent",
+    "autonomous"
+  ],
+  "author": "Project Jack Team",
+  "license": "MIT",
   "dependencies": {
-    "mineflayer": "^4.22.0"
+    "mineflayer": "^4.22.0",
+    "mineflayer-pathfinder": "^2.4.5"
   }
 }
