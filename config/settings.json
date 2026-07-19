@@ -1,0 +1,36 @@
+{
+  "server": {
+    "host": "CHANGE_ME",
+    "port": 25565,
+    "version": "1.20.1"
+  },
+  "bot": {
+    "username": "BinZaid",
+    "auth": "offline"
+  },
+  "safety": {
+    "voidPaddingRadius": 4,
+    "checkIntervalMs": 50
+  },
+  "pathfinder": {
+    "maxNodes": 10000,
+    "timeoutMs": 30000
+  },
+  "personality": {
+    "minChatDelayMs": 800,
+    "maxChatDelayMs": 2500
+  },
+  "logging": {
+    "enabled": true,
+    "maxBufferEntries": 50,
+    "minLogLevel": "info"
+  },
+  "runtime": {
+    "reconnect": {
+      "enabled": true,
+      "baseDelayMs": 10000,
+      "maxDelayMs": 60000,
+      "maxAttempts": 5
+    }
+  }
+}
