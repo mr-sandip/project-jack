@@ -1,0 +1,12 @@
+{
+  "name": "project-jack",
+  "version": "1.0.0",
+  "description": "AI Minecraft Player - Jack Bhaiya",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "mineflayer": "^4.22.0"
+  }
+}
