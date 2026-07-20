@@ -1,0 +1,233 @@
+/**
+ * @file subsystems/decisionEngine.js
+ * @description Coordinates the core cognitive orchestration loop of the autonomous agent.
+ * Executes periodic tick cycles to evaluate perception, goals, planning, and actions
+ * while ensuring event-loop safety and memory efficiency on Render Free Tier.
+ */
+
+// Module-private state variables
+let envRegistry = null;
+let boundBotInstance = null;
+let isLoopRunning = false;
+let tickTimeoutId = null;
+let loopGeneration = 0;
+
+// Default fallback configuration thresholds (Strict YAGNI alignment)
+const DEFAULT_TICK_INTERVAL_MS = 1000;
+
+/**
+ * Safely routes logs to the centralized LoggerService through the DI framework.
+ * @param {string} level - Lowercase log severity type ('info', 'warn', 'error').
+ * @param {string} message - Primary log narrative text.
+ * @param {*} [error] - Supplementary error stack or object context structure.
+ */
+function safeLog(level, message, error = null) {
+    if (envRegistry &&
+        envRegistry.services &&
+        envRegistry.services.logger &&
+        typeof envRegistry.services.logger[level] === 'function') {
+        envRegistry.services.logger[level](message, error);
+    }
+}
+
+/**
+ * Executes a single cognitive orchestration tick.
+ * Synchronously sequences evaluation phases through defensive try/catch wrappers
+ * to ensure that failure in any singular subsystem does not crash the core engine process.
+ */
+async function executeCognitiveTick() {
+    if (!isLoopRunning || !boundBotInstance) {
+        return;
+    }
+
+    // Capture generation state before yielding to asynchronous phases
+    const currentGen = loopGeneration;
+
+    // Guard against executing cognitive logic if the bot is dead or unspawned
+    if (typeof boundBotInstance.isValid === 'function' && !boundBotInstance.isValid()) {
+        safeLog('warn', 'DecisionEngine skipped tick: Bot instance context state is invalid.');
+        if (currentGen === loopGeneration) {
+            scheduleNextTick();
+        }
+        return;
+    }
+
+    try {
+        // Phase 1: Safety Subsystem Pre-Evaluation Guard
+        if (envRegistry.subsystems && envRegistry.subsystems.safety && typeof envRegistry.subsystems.safety.evaluateCurrentRisk === 'function') {
+            const isSafe = await envRegistry.subsystems.safety.evaluateCurrentRisk();
+            if (currentGen !== loopGeneration) return;
+            if (!isSafe) {
+                safeLog('warn', 'DecisionEngine tick halted: Safety subsystem detected critical hazard status.');
+                scheduleNextTick();
+                return;
+            }
+        }
+
+        // Phase 2: Perception Update Processing
+        if (currentGen !== loopGeneration) return;
+        if (envRegistry.subsystems && envRegistry.subsystems.perception && typeof envRegistry.subsystems.perception.updateWorldState === 'function') {
+            await envRegistry.subsystems.perception.updateWorldState();
+        }
+
+        // Phase 3: Goal Management Arbitration
+        if (currentGen !== loopGeneration) return;
+        let activeGoal = null;
+        if (envRegistry.subsystems && envRegistry.subsystems.goalManager && typeof envRegistry.subsystems.goalManager.arbitrateGoals === 'function') {
+            activeGoal = await envRegistry.subsystems.goalManager.arbitrateGoals();
+        }
+
+        // Phase 4: Plan Construction and Refinement
+        if (currentGen !== loopGeneration) return;
+        let currentPlan = null;
+        if (activeGoal && envRegistry.subsystems && envRegistry.subsystems.planner && typeof envRegistry.subsystems.planner.buildPlanForGoal === 'function') {
+            currentPlan = await envRegistry.subsystems.planner.buildPlanForGoal(activeGoal);
+        }
+
+        // Phase 5: Action Processing Allocation & Dispatch
+        if (currentGen !== loopGeneration) return;
+        if (currentPlan && envRegistry.subsystems && envRegistry.subsystems.actionExecutor && typeof envRegistry.subsystems.actionExecutor.dispatchPlan === 'function') {
+            await envRegistry.subsystems.actionExecutor.dispatchPlan(currentPlan);
+        }
+
+    } catch (tickFault) {
+        if (currentGen !== loopGeneration) return;
+        safeLog('error', 'Critical operational fault isolated during DecisionEngine tick cycle:', tickFault);
+    }
+
+    // Schedule the next cycle cleanly if generation state remains validated
+    if (currentGen === loopGeneration) {
+        scheduleNextTick();
+    }
+}
+
+/**
+ * Schedules the next cognitive tick cycle via non-blocking asynchronous timers.
+ * Prevents stack overflows and respects Render Free Tier CPU slice limits.
+ */
+function scheduleNextTick() {
+    if (!isLoopRunning) return;
+
+    // Clear any dangling references to avoid racing conditions
+    if (tickTimeoutId) {
+        clearTimeout(tickTimeoutId);
+    }
+
+    // Extract dynamic interval config boundaries safely if defined in settings
+    let tickIntervalMs = DEFAULT_TICK_INTERVAL_MS;
+    if (envRegistry &&
+        envRegistry.config &&
+        envRegistry.config.personality &&
+        typeof envRegistry.config.personality.cognitiveTickIntervalMs === 'number' &&
+        Number.isFinite(envRegistry.config.personality.cognitiveTickIntervalMs)) {
+        // Tick interval validation: Clamp value strictly between 100ms and 10000ms range boundaries
+        tickIntervalMs = Math.max(100, Math.min(envRegistry.config.personality.cognitiveTickIntervalMs, 10000));
+    }
+
+    tickTimeoutId = setTimeout(() => {
+        executeCognitiveTick();
+    }, tickIntervalMs);
+}
+
+/**
+ * DecisionEngine Interface Layer.
+ * Coordinates execution sequence cycles under a frozen singleton runtime frame.
+ */
+const DecisionEngine = {
+    /**
+     * Mounts the global dependency injection container onto the module private context memory.
+     * @param {Object} registry - Top-level central application mapping matrix reference.
+     * @throws {Error} If the injected registry interface fails contract validation.
+     */
+    initialize(registry) {
+        if (!registry || !registry.services || !registry.subsystems || !registry.config) {
+            throw new Error('DecisionEngine Initialization Failure: Malformed dependency injection registry contract mapping.');
+        }
+        envRegistry = registry;
+        safeLog('info', 'DecisionEngine infrastructure layer successfully initialized.');
+    },
+
+    /**
+     * Binds the cognitive coordinator to the newly allocated network socket wrapper.
+     * Handles safe runtime teardown of active timers if rebinding occurs dynamically.
+     * @param {Object} bot - Concrete instantiated Mineflayer bot object instance.
+     * @throws {Error} If the bot instance fails interface capability validation rules.
+     */
+    bindBot(bot) {
+        if (!envRegistry) {
+            throw new Error('DecisionEngine Integration Violation: bindBot called prior to module initialization.');
+        }
+        if (!bot) {
+            throw new Error('DecisionEngine Integration Violation: Cannot bind an empty or non-existent bot reference allocation.');
+        }
+        if (typeof bot.on !== 'function') {
+            throw new Error('DecisionEngine Integration Violation: Invalid Mineflayer bot interface.');
+        }
+
+        // If a rebind event fires, gracefully halt any operational loops first
+        if (boundBotInstance) {
+            safeLog('info', 'DecisionEngine rebinding detected. Resetting active scheduling timers.');
+            this.stopLoop();
+        }
+
+        boundBotInstance = bot;
+        safeLog('info', 'DecisionEngine successfully attached to current live bot network context.');
+    },
+
+    /**
+     * Actively kicks off the primary infinite cognitive sequence grid ticker loop.
+     * Implements strict race guards to prevent multiple concurrent processing loops.
+     */
+    startLoop() {
+        if (!envRegistry || !boundBotInstance) {
+            throw new Error('DecisionEngine Activation Failure: Cannot start loop without full dependency and bot context binding.');
+        }
+
+        if (isLoopRunning) {
+            safeLog('warn', 'DecisionEngine start request ignored: Cognitive ticker loop is already active.');
+            return;
+        }
+
+        // Reset generation token on start to completely dump outdated async execution tails
+        loopGeneration++;
+        isLoopRunning = true;
+        safeLog('info', 'Cognitive execution grid sequence loop actively engaged.');
+        
+        // Defer initial execution path invocation to keep the main initialization stream completely unblocked
+        process.nextTick(() => {
+            executeCognitiveTick();
+        });
+    },
+
+    /**
+     * Halts the active cognitive scheduling ticker completely.
+     * Flushes local timer handles cleanly to protect host resources from background leaks.
+     */
+    stopLoop() {
+        if (!isLoopRunning) {
+            return;
+        }
+        isLoopRunning = false;
+        
+        // Invalidate any outstanding asynchronous tick invocations currently in flight
+        loopGeneration++;
+
+        if (tickTimeoutId) {
+            clearTimeout(tickTimeoutId);
+            tickTimeoutId = null;
+        }
+
+        safeLog('info', 'Cognitive execution grid sequence loop halted and disassembled.');
+    },
+
+    /**
+     * Interrogates if the cognitive orchestration ticker loop is actively running.
+     * @returns {boolean} True if the primary orchestration cycle is active.
+     */
+    isActive() {
+        return isLoopRunning;
+    }
+};
+
+Object.freeze(DecisionEngine);
+module.exports = DecisionEngine;
